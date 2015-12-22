@@ -1,0 +1,48 @@
+{
+  "name": "exapp-sql",
+  "version": "0.0.1",
+
+  "description": "Multi-DB SQL driver designed to work with exapp.js framework.",
+  "keywords": [
+    "database",
+    "driver",
+    "exapp",
+    "module",
+    "mysql",
+    "postgres",
+    "sql",
+    "sqlite"
+  ],
+
+  "homepage": "https://github.com/exceptionaljs/exapp-sql",
+  "bugs": {
+    "url": "https://github.com/exceptionaljs/exapp-sql/issues"
+  },
+
+  "contributors": [{
+    "name": "Petr Kobalicek",
+    "email": "kobalicek.petr@gmail.com",
+    "url": "http://kobalicek.com"
+  }],
+
+  "license": "Unlicense",
+
+  "main": "index.js",
+
+  "devDependencies": {
+    "mocha": "*"
+  },
+
+  "peerDependencies": {
+    "exclass": "*"
+  },
+
+  "repository" : {
+    "type": "git",
+    "url": "https://github.com/exceptionaljs/exapp-sql.git"
+  },
+
+  "scripts": {
+    "test": "mocha index-spec.js"
+  }
+}
