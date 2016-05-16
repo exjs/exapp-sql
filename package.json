@@ -1,31 +1,28 @@
 {
-  "name": "exapp-sql",
+  "name": "xpart-sql",
   "version": "0.0.1",
+  "license": "Unlicense",
 
-  "description": "Multi-DB SQL driver designed to work with exapp.js framework.",
+  "description": "Multi-DB SQL driver designed to work with xpart framework.",
   "keywords": [
     "database",
     "driver",
-    "exapp",
     "module",
     "mysql",
     "postgres",
     "sql",
-    "sqlite"
+    "sqlite",
+    "xpart"
   ],
 
-  "homepage": "https://github.com/exceptionaljs/exapp-sql",
+  "homepage": "https://github.com/exceptionaljs/xpart-sql",
   "bugs": {
-    "url": "https://github.com/exceptionaljs/exapp-sql/issues"
+    "url": "https://github.com/exceptionaljs/xpart-sql/issues"
   },
 
-  "contributors": [{
-    "name": "Petr Kobalicek",
-    "email": "kobalicek.petr@gmail.com",
-    "url": "http://kobalicek.com"
-  }],
-
-  "license": "Unlicense",
+  "contributors": [
+    "Petr Kobalicek <kobalicek.petr@gmail.com> (kobalicek.com)"
+  ],
 
   "main": "index.js",
 
@@ -33,13 +30,9 @@
     "mocha": "*"
   },
 
-  "peerDependencies": {
-    "exclass": "*"
-  },
-
   "repository" : {
     "type": "git",
-    "url": "https://github.com/exceptionaljs/exapp-sql.git"
+    "url": "https://github.com/exceptionaljs/xpart-sql.git"
   },
 
   "scripts": {

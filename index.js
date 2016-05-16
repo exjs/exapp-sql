@@ -1,25 +1,19 @@
 "use strict";
 
-var exclass = require("exclass");
-var hasOwn = Object.prototype.hasOwnProperty;
-
-// ============================================================================
-// [Module (exapp.js)]
-// ============================================================================
-
 function new_(app, config) {
   var engine = getEngine(config.engine);
   return engine.new(app, config);
 }
-exports["new"] = new_;
+exports.new = new_;
 
-// ============================================================================
-// [Utils]
-// ============================================================================
-
-// Get the SQL engine by `name`.
-//
-// It throws if the SQL module
+/**
+ * Gets the SQL engine by `name`.
+ *
+ * @param {string} name Name of the SQL engine to get.
+ * @return {object} SQL module.
+ *
+ * @throws {Error} If the requested SQL module doesn't exist.
+ */
 function getEngine(name) {
   if (!/[a-z_][a-z0-9_]*/.test(name))
     throw new Error("Invalid module '" + name + "'");
@@ -28,96 +22,120 @@ function getEngine(name) {
 }
 exports.getEngine = getEngine;
 
-function flattenQuery(q, options) {
-  // Support UQL and compatible query builders.
-  if (typeof q.compileQuery === "function")
-    return q.compileQuery(/* TODO: UQL options */);
-  else
-    return q.toString();
-}
-exports.flattenQuery = flattenQuery;
+const nopCompiler = new class {
+  compile(q) { return String(q); }
+};
 
 // ============================================================================
 // [SQLError]
 // ============================================================================
 
-// \class SQLError
-//
-// SQL error that can be returned by an underlying SQL driver.
-function SQLError(msg) {
-  this.name = "SQLError";
-  this.message = msg;
-  this.stack = Error(msg).stack || "";
-
-  // HACK: Make sure the `SQLError` is reported instead of `Error`.
-  if (this.stack)
-    this.stack = this.name + this.stack.substr(5);
+/**
+ * SQL error that can be returned by an underlying SQL driver.
+ *
+ * @param message Error mesasge.
+ */
+class SQLError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SQLError";
+    this.message = message;
+  }
 }
-exports.SQLError = exclass({
-  $extend: Error,
-  $construct: SQLError
-});
+exports.SQLError = SQLError;
 
 // ============================================================================
 // [SQLDriver]
 // ============================================================================
 
-// \class SQLDriver
-//
-// Base class that implements functionality required by all SQL drivers.
-function SQLDriver(app, config) {
-  var self = this;
+/**
+ * Base class that implements functionality required by all SQL drivers.
+ */
+class SQLDriver {
+  constructor(app, config) {
+    var self = this;
 
-  // Internals are always used by driver implementations.
-  this.app = app;
-  this._internal = {
-    impl           : null,                         // SQL driver (pg, mysql, etc).
-    status         : "pending",                    // SQL driver status.
+    // Internals are always used by driver implementations.
+    this.app = app;
+    this._internal = {
+      impl           : config.backend || null,       // SQL driver module (pg, mysql, etc).
+      dialect        : "",                           // SQL driver dialect ("pgsql", "mysql", etc).
+      status         : "pending",                    // SQL driver status.
 
-    host           : config.host || null,          // SQL server host.
-    port           : config.port || null,          // SQL server port.
-    username       : config.username || null,      // SQL user name.
-    password       : config.password || null,      // SQL user's password.
-    database       : config.database || null,      // SQL database.
+      compiler       : nopCompiler,                  // SQL query compiler.
 
-    debugQueries   : Boolean(config.debugQueries), // Print queries.
-    debugResults   : Boolean(config.debugResults), // Print queries.
+      host           : config.host || null,          // SQL server host.
+      port           : config.port || null,          // SQL server port.
+      username       : config.username || null,      // SQL user name.
+      password       : config.password || null,      // SQL user's password.
+      database       : config.database || null,      // SQL database.
 
-    clientsCount   : 0,                            // Number of all clients.
-    clientsActive  : 0,                            // Number of active clients.
-    clientsMinimum : config.minConnections || 0,   // Minimum number of clients.
-    clientsMaximum : config.maxConnections || 20,  // Maximum number of clients.
+      debugQueries   : Boolean(config.debugQueries), // Print queries.
+      debugResults   : Boolean(config.debugResults), // Print queries.
 
-    failuresCount  : 0,                            // Count of failure attempts to create a client.
-    failuresMaximum: config.maximumFailures || 20, // Maximum of failure attempts to create the first client.
+      clientsCount   : 0,                            // Number of all clients.
+      clientsActive  : 0,                            // Number of active clients.
+      clientsMinimum : config.minConnections || 0,   // Minimum number of clients.
+      clientsMaximum : config.maxConnections || 20,  // Maximum number of clients.
 
-    clientPool     : null,                         // SQL client pool.
-    queueFirst     : null,                         // First item in work queue (FIFO).
-    queueLast      : null,                         // Last item in work queue (FIFO).
-    queueSize      : 0,                            // Number of items in the queue.
+      failuresCount  : 0,                            // Count of failure attempts to create a client.
+      failuresMaximum: config.maximumFailures || 20, // Maximum of failure attempts to create the first client.
 
-    txIdGenerator  : 0,                            // Transaction ID counter.
-    onClientQuery  : onClientQuery,                // Query handler callback.
-    onClientCreated: onClientCreated,              // Client idle callback.
-    onDelayedStop  : null                          // Delayed stop callback.
-  };
+      clientPool     : null,                         // SQL client pool.
+      queueFirst     : null,                         // First item in work queue (FIFO).
+      queueLast      : null,                         // Last item in work queue (FIFO).
+      queueSize      : 0,                            // Number of items in the queue.
 
-  // Internal callbacks, bound only once to decrease the memory footprint.
-  function onClientQuery(err, result) {
-    self._onClientQuery(err, result);
+      txIdGenerator  : 0,                            // Transaction ID counter.
+      onClientQuery  : onClientQuery,                // Query handler callback.
+      onClientCreated: onClientCreated,              // Client idle callback.
+      onDelayedStop  : null                          // Delayed stop callback.
+    };
+
+    // Internal callbacks, bound only once to decrease the memory footprint.
+    function onClientQuery(err, result) {
+      self._onClientQuery(err, result);
+    }
+
+    function onClientCreated(err, client) {
+      self._onClientCreated(err, client);
+    }
   }
 
-  function onClientCreated(err, client) {
-    self._onClientCreated(err, client);
-  }
-}
-exports.SQLDriver = exclass({
-  $construct: SQLDriver,
+  /**
+   * Configure the driver based on the configuration. Always called by the class
+   * that extends the driver.
+   */
+  _postConfigure(config, defaults) {
+    var internal = this._internal;
+    var dialect = internal.dialect;
 
-  // Implements `exapp.js` start interface.
-  //
-  // Performs basic checks and calls `_start()`, which can be overridden by the driver.
-  start: function(cb) {
+    // This is gonna throw, as intended, if there is no package that provides
+    // the driver. The reason  is that we cannot recover from this. The user
+    // can pass `config.backend` if different driver should be used.
+    if (internal.impl === null)
+      internal.impl = require(defaults.driver);
+
+    if (config.compiler) {
+      switch (config.compiler) {
+        case "xql":
+          internal.compiler = require("xql").dialect.newContext({ dialect: dialect });
+          break;
+
+        default:
+          throw SQLError("Unrecognized SQL compiler");
+      }
+    }
+  }
+
+  /**
+   * Implements `xpart.start` interface.
+   *
+   * Performs basic checks and calls `_start()`, which can be overridden by the driver.
+   *
+   * @param {function} cb Start callback.
+   */
+  start(cb) {
     var internal = this._internal;
 
     if (internal.status !== "pending") {
@@ -126,14 +144,18 @@ exports.SQLDriver = exclass({
     }
 
     this._start(cb);
-  },
+  }
 
-  // Implements `exapp.js` stop interface.
-  //
-  // Performs basic checks and calls `_stop()`, which can be overridden by the
-  // driver, after all operations finish execution. After `stop()` is called
-  // the driver will refuse all future SQL requests, but completes all ongoing.
-  stop: function(cb) {
+  /**
+   * Implements `xpart.stop` interface.
+   *
+   * Performs basic checks and calls `_stop()`, which can be overridden by the
+   * driver, after all operations finish execution. After `stop()` is called
+   * the driver will refuse all future SQL requests, but completes all ongoing.
+   *
+   * @param {function} cb Stop callback.
+   */
+  stop(cb) {
     var internal = this._internal;
 
     if (internal.status !== "running" || internal.onDelayedStop) {
@@ -152,28 +174,49 @@ exports.SQLDriver = exclass({
       this._destroyPool();
       this._stop(cb);
     }
-  },
+  }
 
-  // Returns the status of the driver.
-  //
-  // The possible return values are:
-  //   - "pending"  - The driver didn't start yet - `start()` has not been called.
-  //   - "starting" - The driver is starting at the moment - `start()` has been
-  //                  called, but didn't callback yet.
-  //   - "running"  - The driver is running at the moment.
-  //   - "stopping" - The driver is terminating at the moment - `stop()` has been
-  //                  called, but didn't callback yet.
-  //   - "stopped"  - The driver is stopped.
-  getStatus: function() {
+  /**
+   * Returns the status of the driver.
+   *
+   * @return {string}
+   *   Status of the driver:
+   *     - `"pending"`  - The driver haven't started yet - `start()` has not
+   *       been called.
+   *     - `"starting"` - The driver is starting at the moment - `start()` has
+   *       been called, but didn't callback yet.
+   *     - `"running"`  - The driver is running at the moment.
+   *     - `"stopping"` - The driver is terminating at the moment - `stop()`
+   *       has been called, but didn't callback yet.
+   *     - `"stopped"`  - The driver is stopped.
+   */
+  getStatus() {
     return this._internal.status;
-  },
+  }
 
-  // \function `SQLDriver.query(q, cb [, tx])`
-  //
-  // Perform a SQL query.
-  query: function(q, cb, tx) {
+  /**
+   * Returns the SQL driver's dialect:
+   *
+   *   - `"mysql"` if the driver is `mysql`.
+   *   - `"pgsql"` if the driver is `pg`.
+   *   - `"sqlite"` if the driver is `sqlite`.
+   *
+   * @return {string}
+   */
+  getDialect() {
+    return this._internal.dialect;
+  }
+
+  /**
+   * Performs a SQL query.
+   *
+   * @param {*} q Query string or a query-builder object.
+   * @param {function} cb Query callback.
+   * @param {object=} tx Transaction.
+   */
+  query(q, cb, tx) {
     var internal = this._internal;
-    var qs = flattenQuery(q);
+    var qs = internal.compiler.compile(q);
 
     if (tx)
       return tx.query(qs, cb);
@@ -190,14 +233,17 @@ exports.SQLDriver = exclass({
       this._getClientFromPool().query(qs, cb);
     else
       this._addToQueue(qs, cb);
-  },
+  }
 
-  // \function `SQLDriver.transaction(cb)`
-  //
-  // Begins a new transaction object and passes it to the callback `cb`. The
-  // created transaction has to be finalized by either calling `commit()`,
-  // `rollback()`, or `cancel()`. See `SQLClient` for more details.
-  begin: function(cb) {
+  /**
+   * Begins a new SQL transaction and passes the transaction object to the
+   * `cb` callback. The created transaction has to be finalized by either
+   * calling `commit()`, `rollback()`, or `cancel()`. See `SQLClient` for more
+   * details.
+   *
+   * @param {function} cb Called when the transaction object is ready.
+   */
+  begin(cb) {
     var internal = this._internal;
 
     // Check whether the driver is running. It's an application failure if it
@@ -213,31 +259,45 @@ exports.SQLDriver = exclass({
       this._getClientFromPool().begin(cb);
     else
       this._addToQueue(null, cb);
-  },
+  }
 
-  // \internal
-  //
-  // Start callback.
-  _start: function(cb) {
+  /**
+   * Start callback.
+   *
+   * @param {function} cb Callback to call.
+   * @private
+   */
+  _start(cb) {
     var internal = this._internal;
     internal.status = "running";
     setImmediate(cb, null);
-  },
+  }
 
-  // \internal
-  //
-  // Stop callback.
-  _stop: function(cb) {
+  /**
+   * Stop callback.
+   *
+   * @param {function} cb Callback to call.
+   * @private
+   */
+  _stop(cb) {
     var internal = this._internal;
     internal.status = "stopped";
     internal.onDelayedStop = null;
     setImmediate(cb, null);
-  },
+  }
 
-  // Adds a `query` to the internal queue to be handled later.
-  //
-  // NOTE: If the query is `null` it's a transaction (handled differently).
-  _addToQueue: function(qs, cb) {
+  /**
+   * Adds a `query` to the internal queue to be handled later.
+   *
+   * NOTE: If the query is `null` it's a transaction, which is handled a bit
+   * differently.
+   *
+   * @param {*} qs Query to add to the queue (or `null` if it's a transaction).
+   * @param {function} cb Callback to call when the query can be executed.
+   *
+   * @private
+   */
+  _addToQueue(qs, cb) {
     var internal = this._internal;
     var last = internal.queueLast;
 
@@ -257,11 +317,18 @@ exports.SQLDriver = exclass({
 
     // Inform the driver that some work has been added to the queue.
     this._scheduleWork();
-  },
+  }
 
-  // The caller has to check whether there is at least one item before
-  // calling `_handleQueue()`.
-  _handleQueue: function(client) {
+  /**
+   * Handle one item in the internal query queue. The caller has to check
+   * whether there is at least one item before calling `_handleQueue()`.
+   *
+   * @param {SQLClient} client SQL client that will be used to handle the query
+   *   or transaction in the queue.
+   *
+   * @private
+   */
+  _handleQueue(client) {
     var internal = this._internal;
 
     var item = internal.queueFirst;
@@ -280,9 +347,18 @@ exports.SQLDriver = exclass({
       client.query(qs, cb);
     else
       client.begin(cb);
-  },
+  }
 
-  _idle: function() {
+  /**
+   * Puts the driver into an idle state. Idle state means that there are no
+   * more items in the internal queue and there are no active SQL clients.
+   *
+   * Idle is called mostly to gratefully stop the SQL driver when no more
+   * requests are pending. It has generally no effect on a running application.
+   *
+   * @private
+   */
+  _idle() {
     var internal = this._internal;
 
     // If the driver is stopping and idle it's the right time to gratefully
@@ -291,13 +367,17 @@ exports.SQLDriver = exclass({
       this._destroyPool();
       this._stop(internal.onDelayedStop);
     }
-  },
+  }
 
-  // Checks whether the work queue is not empty and assigns a client to the
-  // first item in the queue. It will try to create a new client if the
-  // number of created clients didn't exceed the limit. Called after the work
-  // has been added to the queue or after a client failed to instantiate.
-  _scheduleWork: function() {
+  /**
+   * Checks whether the work queue is not empty and assigns a client to the
+   * first item in the queue. It will try to create a new client if the
+   * number of created clients didn't exceed the limit. Called after the work
+   * has been added to the queue or after a client failed to instantiate.
+   *
+   * @private
+   */
+  _scheduleWork() {
     var internal = this._internal;
 
     if (internal.queueFirst) {
@@ -312,11 +392,17 @@ exports.SQLDriver = exclass({
         this._createClient(internal.onClientCreated);
       }
     }
-  },
+  }
 
-  // Called after a new `client` has been created.
-  _onClientCreated: function(err, client) {
-    var self = this;
+  /**
+   * Called after a new `client` has been created.
+   *
+   * @param {?Error} err Error that happened when creating the SQLClient.
+   * @param {?SQLClient} client A new SQLClient instance.
+   *
+   * @private
+   */
+  _onClientCreated(err, client) {
     var internal = this._internal;
 
     if (client) {
@@ -345,24 +431,37 @@ exports.SQLDriver = exclass({
         this._scheduleWork();
       }
     }
-  },
+  }
 
-  // Called when a `client` became idle.
-  _onClientIdle: function(client) {
+  /**
+   * Called when a `client` became idle.
+   *
+   * The given client will handle the next item in the internal queue or will
+   * go idle.
+   *
+   * @param {SQLClient} client SQL client that can go idle.
+   *
+   * @private
+   */
+  _onClientIdle(client) {
     var internal = this._internal;
 
     if (internal.queueFirst)
       this._handleQueue(client);
     else
       this._releaseClient(client);
-  },
+  }
 
-  // Called to get a SQL client from the pool. It does the necessary work
-  // to unlink the client from the pool and to update internal counters.
-  //
-  // NOTE: There must be a client in the pool, check `internal.clientPool`
-  // before calling this function.
-  _getClientFromPool: function() {
+  /**
+   * Called to get a SQL client from the pool. It does the necessary work
+   * to unlink the client from the pool and to update internal counters.
+   *
+   * NOTE: There must be a client in the pool, check `internal.clientPool`
+   * before calling this function.
+   *
+   * @private
+   */
+  _getClientFromPool() {
     var internal = this._internal;
     var client = internal.clientPool;
 
@@ -373,10 +472,16 @@ exports.SQLDriver = exclass({
     client._next = null;
 
     return client;
-  },
+  }
 
-  // Releases the SQL client to the client pool or destroys it.
-  _releaseClient: function(client) {
+  /**
+   * Releases the SQL client to the client pool or destroys it.
+   *
+   * @param {SQLClient} client SQL client to release or destroy.
+   *
+   * @private
+   */
+  _releaseClient(client) {
     var internal = this._internal;
     var keep = internal.status === "running" && !client._failed;
 
@@ -402,10 +507,14 @@ exports.SQLDriver = exclass({
     }
 
     this._idle();
-  },
+  }
 
-  // Releases all pooled clients.
-  _destroyPool: function() {
+  /**
+   * Releases all idle clients waiting in the client-pool.
+   *
+   * @private
+   */
+  _destroyPool() {
     var internal = this._internal;
     var client = internal.clientPool;
     var n = 0;
@@ -421,66 +530,75 @@ exports.SQLDriver = exclass({
     internal.clientsCount -= n;
     internal.clientsActive -= n;
     internal.clientPool = null;
-  },
+  }
 
-  _newTxId: function() {
+  /**
+   * Generates a unique transaction-id.
+   *
+   * @private
+   */
+  _newTxId() {
     var internal = this._internal;
     return ++internal.txIdGenerator;
-  },
+  }
 
-  // \internal
-  //
-  // Gets the URI of the server to connect to based on the configuration passed
-  // to the `SQLServer()` constructor. Some implementations (SQLite) will never
-  // call `_getServerURL()` as they use a local file system.
-  _getServerURL: function() {
+  /**
+   * Gets the URI of the server to connect to based on the configuration passed
+   * to the `SQLServer()` constructor. Some implementations (SQLite) will never
+   * call `_getServerURL()` as they use a local file system.
+   *
+   * @private
+   */
+  _getServerURL() {
     throw new TypeError("SQLDriver._getServerURL() is abstract");
-  },
+  }
 
-  // \internal
-  //
-  // Creates a new SQL client.
-  _createClient: function(cb) {
+  /**
+   * Creates a new SQL client.
+   *
+   * @private
+   */
+  _createClient(cb) {
     throw new TypeError("SQLDriver._createClient() is abstract");
-  },
+  }
 
-  // \internal
-  //
-  // Destroys the SQL client.
-  _destroyClient: function(client) {
+  /**
+   * Destroys the SQL client.
+   *
+   * @private
+   */
+  _destroyClient(client) {
     throw new TypeError("SQLDriver._destroyClient() is abstract");
   }
-});
+}
+exports.SQLDriver = SQLDriver;
 
 // ============================================================================
 // [SQLClient]
 // ============================================================================
 
-// \class SQLClient
-//
-// A wrapper around a native SQL client / connection, used by `SQLDriver`.
-function SQLClient(driver, impl) {
-  var self = this;
+/**
+ * A wrapper around a native SQL client / connection, used by `SQLDriver`.
+ */
+class SQLClient {
+  constructor(driver, impl) {
+    this._driver = driver;     // SQL driver (owner).
+    this._impl = impl;         // SQL client (implementation).
+    this._next = null;         // Next client in the client pool.
 
-  this._driver = driver;     // SQL driver (owner).
-  this._impl = impl;         // SQL client (implementation).
-  this._next = null;         // Next client in the client pool.
+    this._txId = -1;           // Transaction ID, -1 if not transacting.
+    this._txState = "";        // Transaction state (internal to SQLClient).
 
-  this._txId = -1;           // Transaction ID, -1 if not transacting.
-  this._txState = "";        // Transaction state (internal to SQLClient).
+    this._failed = false;      // True if the client failed a transaction.
+    this._pooled = false;      // True if the client is in the client pool now.
+    this._returnToPool = true; // Return to the connection pool after query.
 
-  this._failed = false;      // True if the client failed a transaction.
-  this._pooled = false;      // True if the client is in the client pool now.
-  this._returnToPool = true; // Return to the connection pool after query.
+    this._qs = "";             // Query string (stored for better error reports).
+    this._cb = null;           // Query callback (if performing query now).
+    this._onQuery = null;      // Query handler, has to be implemented by the driver.
+  }
 
-  this._qs = "";             // Query string (stored for better error reports).
-  this._cb = null;           // Query callback (if performing query now).
-  this._onQuery = null;      // Query handler, has to be implemented by the driver.
-}
-exports.SQLClient = exclass({
-  $construct: SQLClient,
-
-  begin: function(cb) {
+  begin(cb) {
     var driver = this._driver;
 
     if (this._txId !== -1) {
@@ -495,9 +613,9 @@ exports.SQLClient = exclass({
 
     // Begin has to be async.
     setImmediate(cb, null, this);
-  },
+  }
 
-  commit: function(/* [q,] */ cb) {
+  commit(/* [q,] */ cb) {
     var q = "";
 
     if (arguments.length > 1) {
@@ -506,8 +624,8 @@ exports.SQLClient = exclass({
     }
 
     var driver = this._driver;
-    var qs = flattenQuery(q);
-    
+    var qs = driver._internal.compiler.compile(q);
+
     if (this._txId === -1) {
       setImmediate(cb, null, new SQLError("Cannot COMMIT while not being in a transaction state"));
       return driver._onClientIdle(this);
@@ -531,9 +649,11 @@ exports.SQLClient = exclass({
     this._txState = "COMMIT";
     this._returnToPool = true;
     return this.query(qs, cb);
-  },
+  }
 
-  rollback: function(cb) {
+  rollback(cb) {
+    var driver = this._driver;
+
     if (this._txId === -1) {
       setImmediate(cb, null, new SQLError("Cannot ROLLBACK while not being in a transaction state"));
       return driver._onClientIdle(this);
@@ -549,10 +669,11 @@ exports.SQLClient = exclass({
     this._txState = "ROLLBACK";
     this._returnToPool = true;
     return this.query(qs, cb);
-  },
+  }
 
-  query: function(q, cb) {
-    var qs = flattenQuery(q);
+  query(q, cb) {
+    var driver = this._driver;
+    var qs = driver._internal.compiler.compile(q);
 
     // If this is a transacting query make sure that the transaction is
     // started by "BEGIN", the SQLClient won't do that before the first
@@ -565,9 +686,10 @@ exports.SQLClient = exclass({
     }
 
     this._query(qs, cb);
-  },
+  }
 
-  _query: function(qs, cb) {
+  _query(qs, cb) {
     throw new TypeError("SQLClient._query() is abstract");
   }
-});
+}
+exports.SQLClient = SQLClient;
