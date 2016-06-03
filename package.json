@@ -2,6 +2,7 @@
   "name": "xpart-sql",
   "version": "0.0.1",
   "license": "Unlicense",
+  "engines": { "node": ">=4" },
 
   "description": "Multi-DB SQL driver designed to work with xpart framework.",
   "keywords": [
@@ -24,11 +25,8 @@
     "Petr Kobalicek <kobalicek.petr@gmail.com> (kobalicek.com)"
   ],
 
-  "main": "index.js",
-
-  "devDependencies": {
-    "mocha": "*"
-  },
+  "main": "xpart-sql.js",
+  "peerDependencies": { "xql": "*" },
 
   "repository" : {
     "type": "git",
@@ -36,6 +34,6 @@
   },
 
   "scripts": {
-    "test": "mocha index-spec.js"
+    "test": "mocha xpart-sql-spec.js"
   }
 }
